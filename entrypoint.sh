@@ -12,10 +12,18 @@
 # mengiklankan port publik itu, dan socat meneruskan port aplikasi proxy → port tsb di dalam kontainer.
 set -eu
 
-: "${LIVEKIT_API_KEY:?LIVEKIT_API_KEY belum diisi}"
-: "${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET belum diisi}"
-if [ "${#LIVEKIT_API_SECRET}" -lt 32 ]; then
-  echo "LIVEKIT_API_SECRET harus minimal 32 karakter" >&2
+echo "== LiveKit (Railway) =="
+have() { eval "[ -n \"\${$1:-}\" ]" && echo "ada" || echo "KOSONG"; }
+SECRET="${LIVEKIT_API_SECRET:-}"
+echo "LIVEKIT_API_KEY: $(have LIVEKIT_API_KEY) | LIVEKIT_API_SECRET: $(have LIVEKIT_API_SECRET) (${#SECRET} karakter) | WEBHOOK_URL: $(have WEBHOOK_URL)"
+echo "RAILWAY_TCP_PROXY_DOMAIN=${RAILWAY_TCP_PROXY_DOMAIN:-} RAILWAY_TCP_PROXY_PORT=${RAILWAY_TCP_PROXY_PORT:-} RAILWAY_TCP_APPLICATION_PORT=${RAILWAY_TCP_APPLICATION_PORT:-}"
+
+if [ -z "${LIVEKIT_API_KEY:-}" ] || [ -z "${LIVEKIT_API_SECRET:-}" ]; then
+  echo "GAGAL: isi variabel LIVEKIT_API_KEY dan LIVEKIT_API_SECRET di tab Variables lalu redeploy." >&2
+  exit 1
+fi
+if [ "${#SECRET}" -lt 32 ]; then
+  echo "GAGAL: LIVEKIT_API_SECRET harus minimal 32 karakter (sekarang ${#SECRET})." >&2
   exit 1
 fi
 
@@ -24,22 +32,22 @@ TCP_PORT=7881
 NODE_IP_LINE=""
 
 if [ -n "${RAILWAY_TCP_PROXY_PORT:-}" ] && [ -n "${RAILWAY_TCP_PROXY_DOMAIN:-}" ]; then
-  TCP_PORT="$RAILWAY_TCP_PROXY_PORT"
   APP_PORT="${RAILWAY_TCP_APPLICATION_PORT:-7882}"
   case "$RAILWAY_TCP_PROXY_DOMAIN" in
-    *[!0-9.]*) NODE_IP="$(dig +short "$RAILWAY_TCP_PROXY_DOMAIN" | grep -E '^[0-9.]+$' | head -n1 || true)"
-               [ -n "$NODE_IP" ] || NODE_IP="$(getent hosts "$RAILWAY_TCP_PROXY_DOMAIN" | awk '{print $1; exit}')" ;;
+    *[!0-9.]*) NODE_IP="$(dig +short "$RAILWAY_TCP_PROXY_DOMAIN" 2>/dev/null | grep -E '^[0-9.]+$' | head -n1 || true)"
+               [ -n "$NODE_IP" ] || NODE_IP="$(getent hosts "$RAILWAY_TCP_PROXY_DOMAIN" 2>/dev/null | awk '{print $1; exit}' || true)" ;;
     *) NODE_IP="$RAILWAY_TCP_PROXY_DOMAIN" ;;  # sudah berupa IP
   esac
-  if [ -z "$NODE_IP" ]; then
-    echo "Tidak bisa menemukan IP untuk $RAILWAY_TCP_PROXY_DOMAIN" >&2
-    exit 1
+  LOCAL_IP="$(hostname -i 2>/dev/null | awk '{print $1}' || true)"
+  if [ -z "$NODE_IP" ] || [ -z "$LOCAL_IP" ]; then
+    echo "PERINGATAN: gagal menentukan IP (proxy='${NODE_IP:-}', kontainer='${LOCAL_IP:-}'); jalan tanpa ICE/TCP — signalling hidup, suara TIDAK akan tersambung." >&2
+  else
+    TCP_PORT="$RAILWAY_TCP_PROXY_PORT"
+    NODE_IP_LINE="  node_ip: $NODE_IP"
+    echo "ICE/TCP: klien -> $NODE_IP:$TCP_PORT (proxy Railway) -> :$APP_PORT -> $LOCAL_IP:$TCP_PORT (LiveKit)"
+    # Sambungkan lewat IP kontainer, bukan 127.0.0.1: LiveKit mengabaikan ICE dari alamat loopback.
+    socat "TCP-LISTEN:$APP_PORT,fork,reuseaddr" "TCP:$LOCAL_IP:$TCP_PORT" &
   fi
-  NODE_IP_LINE="  node_ip: $NODE_IP"
-  echo "ICE/TCP: klien -> $NODE_IP:$TCP_PORT (proxy Railway) -> :$APP_PORT -> LiveKit :$TCP_PORT"
-  # Sambungkan lewat IP kontainer, bukan 127.0.0.1: LiveKit mengabaikan ICE dari alamat loopback.
-  LOCAL_IP="$(hostname -i | awk '{print $1}')"
-  socat "TCP-LISTEN:$APP_PORT,fork,reuseaddr" "TCP:$LOCAL_IP:$TCP_PORT" &
 else
   echo "PERINGATAN: TCP Proxy Railway belum ada (RAILWAY_TCP_PROXY_* kosong). Signalling jalan, tetapi suara TIDAK akan tersambung." >&2
   echo "Buat TCP Proxy (application port 7882) di Settings > Networking lalu redeploy." >&2
@@ -64,5 +72,9 @@ fi
     echo "    - $WEBHOOK_URL"
   fi
 } > "$CONFIG"
+
+echo "-- konfigurasi (secret disamarkan) --"
+sed "s|^  $LIVEKIT_API_KEY: .*|  $LIVEKIT_API_KEY: ********|" "$CONFIG"
+echo "-------------------------------------"
 
 exec /livekit-server --config "$CONFIG"

@@ -79,6 +79,7 @@ Jalur ini sudah diuji lokal (kontainer + Docker mensimulasikan proxy, UDP diblok
 
 | Gejala | Kemungkinan penyebab |
 | --- | --- |
+| Status `exited` / kontainer tidak jalan | buka **Deployments → Deploy Logs**; baris `GAGAL: …` menyebut penyebabnya (variabel kosong / secret < 32 karakter) |
 | Log: `PERINGATAN: TCP Proxy Railway belum ada` | TCP Proxy belum dibuat, atau belum redeploy setelahnya |
 | "Menyambung…" lalu terputus | domain publik belum dibuat / target port bukan 7880 / `LIVEKIT_URL` bukan `wss://` |
 | Tersambung, ada nama lawan bicara, **tidak ada suara** | application port TCP Proxy bukan 7882; atau `RAILWAY_TCP_PROXY_*` kosong → redeploy |
